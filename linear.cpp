@@ -2802,7 +2802,7 @@ void find_parameters(const problem *prob, const parameter *param, int nr_fold, d
 }
 
 const int D = 2; // Dimension
-const int N = 40; // Swarm size
+const int N = 5; // Swarm size
 class pso{
     public:
         pso(const problem *prob, const parameter *param, int *fold_start, int *perm, problem *subprob, int nr_fold);
@@ -2812,7 +2812,7 @@ class pso{
         double min_p, max_p;
         double min_C, max_C;
         double range[D][2];
-        const int max_iter = 100;
+        const int max_iter = 10;
         const int nbh_size = 3; // Neighborhood size
         const double omega = 1.0 / (2.0 * log(2.0));
         const double c = 1.0/2.0 + log(2.0);
@@ -2835,6 +2835,8 @@ class pso{
         int *perm;
         problem *subprob;
         int nr_fold;
+        
+        std::default_random_engine sphere_gen;
 
         void update_i(const int i);
         double get_i_MSE(const int i);
@@ -2939,31 +2941,34 @@ void pso::update_i(const int i){
     }
     else{
         for(int d = 0; d < D; d++)
-            g[d] = c_pos[i][d] + c*(p_pos[i][d] + l_pos[i][d] - c_pos[i][d])/3.0;
+            g[d] = c_pos[i][d] + c*(p_pos[i][d] + l_pos[i][d] - 2.0* c_pos[i][d])/3.0;
     }
 
-   // printf("c_pos %lf %lf \n", c_pos[i][0], c_pos[i][1]);
-   // printf("l_pos %lf %lf \n", l_pos[i][0], l_pos[i][1]);
-   // printf("g_pos %lf %lf \n", g[0], g[1]);
+    //printf("c_pos %lf %lf \n", c_pos[i][0], c_pos[i][1]);
+    //printf("l_pos %lf %lf \n", l_pos[i][0], l_pos[i][1]);
+    //printf("p_pos %lf %lf \n", p_pos[i][0], p_pos[i][1]);
+    //printf("g_pos %lf %lf \n", g[0], g[1]);
     double radius = 0;
     for(int d = 0; d < D; d++)
         radius += (c_pos[i][d] - g[d]) * (c_pos[i][d] - g[d]);
     radius = sqrt( radius );
+
+    //printf("radius %lf\n", radius);
     
     double rand_pos[D];
-    std::default_random_engine generator;
     std::normal_distribution<double> distribution(0.0,1.0);
     for(int d = 0; d < D; d++)
-        rand_pos[d] = distribution(generator);
+        rand_pos[d] = distribution(sphere_gen);
 
     double rand_radius = 0;
     for(int d = 0; d < D; d++)
         rand_radius += (rand_pos[d]) * (rand_pos[d]);
     rand_radius = sqrt( rand_radius );
+    //printf("rand_radius %lf\n", rand_radius);
    
     double scale = radius / rand_radius;
     for(int d = 0; d < D; d++)
-        rand_pos[d] *= scale;
+        rand_pos[d] = rand_pos[d] * scale + g[d];
 
     //printf("rand_pos %lf %lf \n", rand_pos[0], rand_pos[1]);
 
@@ -2973,10 +2978,12 @@ void pso::update_i(const int i){
     for(int d = 0; d < D; d++){
         c_pos[i][d] += v[i][d];
         if(c_pos[i][d] < range[d][0]){
+            //fprintf(stdout, "Warning: Hit lower bound %lf is lower then %lf\n", c_pos[i][d], range[d][0]);
             c_pos[i][d] = range[d][0];
             v[i][d] = -0.5 * v[i][d];
         }
         else if(c_pos[i][d] > range[d][1]){
+            //fprintf(stdout, "Warning: Hit upper bound %lf is greater then %lf\n", c_pos[i][d], range[d][1]);
             c_pos[i][d] = range[d][1]; 
             v[i][d] = -0.5 * v[i][d];
         }
@@ -2988,7 +2995,7 @@ void pso::solve(){
         for(int i = 0; i < N; i++){
             update_i(i);
             double mse_i = get_i_MSE(i);
-            printf("p: %lf log2C: %lf mse_i: %lf\n", c_pos[i][0], log(c_pos[i][1])/log(2.0), mse_i );
+            //printf("p: %lf log2C: %lf mse_i: %lf l_mse_i %lf p_mse_i %lf\n", c_pos[i][0], log(c_pos[i][1])/log(2.0), mse_i, l_best[i], p_best[i] );
             update_g_MSE(i, mse_i);
             update_p_MSE(i, mse_i);
             update_l_MSE(i, mse_i);
@@ -2996,6 +3003,7 @@ void pso::solve(){
         printf("iter %d p: %lf C: %lf mse_i: %lf\n", t, g_pos[0], g_pos[1], g_best );
         t++;
     }
+    printf("Best p: %lf C: %lf mse_i: %lf\n", g_pos[0], g_pos[1], g_best );
 }
 
 void find_parameters_pso(const problem *prob, const parameter *param, int nr_fold, double start_C, double start_p, double *best_C, double *best_p, double *best_score)
