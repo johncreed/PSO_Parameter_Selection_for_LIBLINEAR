@@ -2331,7 +2331,7 @@ double cross_validation_with_subprob(const problem *prob, const parameter *param
         int begin = fold_start[i];
         int end = fold_start[i+1];
         int j;
-        struct model *submodel = train(subprob,param);
+        struct model *submodel = train(&subprob[i],param);
         for(j=begin;j<end;j++){
             target[perm[j]] = predict(submodel,prob->x[perm[j]]);
         }
