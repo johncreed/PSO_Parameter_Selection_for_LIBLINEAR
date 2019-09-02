@@ -5,58 +5,19 @@ sys.path = [os.path.dirname(os.path.abspath(__file__))] + sys.path
 from liblinear import *
 from liblinear import __all__ as liblinear_all
 from liblinear import scipy, sparse
+from commonutil import *
+from commonutil import __all__ as common_all
 from ctypes import c_double
 
 if sys.version_info[0] < 3:
 	range = xrange
 	from itertools import izip as zip
+	_cstr = lambda s: s.encode("utf-8") if isinstance(s,unicode) else str(s)
+else:
+	_cstr = lambda s: bytes(s, "utf-8")        
 
-__all__ = ['svm_read_problem', 'load_model', 'save_model', 'evaluations',
-           'train', 'predict'] + liblinear_all
+__all__ = ['load_model', 'save_model', 'train', 'predict'] + liblinear_all + common_all
 
-
-def svm_read_problem(data_file_name, return_scipy=False):
-	"""
-	svm_read_problem(data_file_name, return_scipy=False) -> [y, x], y: list, x: list of dictionary
-	svm_read_problem(data_file_name, return_scipy=True)  -> [y, x], y: ndarray, x: csr_matrix
-
-	Read LIBSVM-format data from data_file_name and return labels y
-	and data instances x.
-	"""
-	prob_y = []
-	prob_x = []
-	row_ptr = [0]
-	col_idx = []
-	for i, line in enumerate(open(data_file_name)):
-		line = line.split(None, 1)
-		# In case an instance with all zero features
-		if len(line) == 1: line += ['']
-		label, features = line
-		prob_y += [float(label)]
-		if scipy != None and return_scipy:
-			nz = 0
-			for e in features.split():
-				ind, val = e.split(":")
-				val = float(val)
-				if val != 0:
-					col_idx += [int(ind)-1]
-					prob_x += [val]
-					nz += 1
-			row_ptr += [row_ptr[-1]+nz]
-		else:
-			xi = {}
-			for e in features.split():
-				ind, val = e.split(":")
-				if val != 0:
-					xi[int(ind)] = float(val)
-			prob_x += [xi]
-	if scipy != None and return_scipy:
-		prob_y = scipy.array(prob_y)
-		prob_x = scipy.array(prob_x)
-		col_idx = scipy.array(col_idx)
-		row_ptr = scipy.array(row_ptr)
-		prob_x = sparse.csr_matrix((prob_x, col_idx, row_ptr))
-	return (prob_y, prob_x)
 
 def load_model(model_file_name):
 	"""
@@ -64,7 +25,7 @@ def load_model(model_file_name):
 
 	Load a LIBLINEAR model from model_file_name and return.
 	"""
-	model = liblinear.load_model(model_file_name.encode())
+	model = liblinear.load_model(_cstr(model_file_name))
 	if not model:
 		print("can't open model file %s" % model_file_name)
 		return None
@@ -77,67 +38,7 @@ def save_model(model_file_name, model):
 
 	Save a LIBLINEAR model to the file model_file_name.
 	"""
-	liblinear.save_model(model_file_name.encode(), model)
-
-def evaluations_scipy(ty, pv):
-	"""
-	evaluations_scipy(ty, pv) -> (ACC, MSE, SCC)
-	ty, pv: ndarray
-
-	Calculate accuracy, mean squared error and squared correlation coefficient
-	using the true values (ty) and predicted values (pv).
-	"""
-	if not (scipy != None and isinstance(ty, scipy.ndarray) and isinstance(pv, scipy.ndarray)):
-		raise TypeError("type of ty and pv must be ndarray")
-	if len(ty) != len(pv):
-		raise ValueError("len(ty) must be equal to len(pv)")
-	ACC = 100.0*(ty == pv).mean()
-	MSE = ((ty - pv)**2).mean()
-	l = len(ty)
-	sumv = pv.sum()
-	sumy = ty.sum()
-	sumvy = (pv*ty).sum()
-	sumvv = (pv*pv).sum()
-	sumyy = (ty*ty).sum()
-	with scipy.errstate(all = 'raise'):
-		try:
-			SCC = ((l*sumvy-sumv*sumy)*(l*sumvy-sumv*sumy))/((l*sumvv-sumv*sumv)*(l*sumyy-sumy*sumy))
-		except:
-			SCC = float('nan')
-	return (float(ACC), float(MSE), float(SCC))
-
-def evaluations(ty, pv, useScipy = True):
-	"""
-	evaluations(ty, pv, useScipy) -> (ACC, MSE, SCC)
-	ty, pv: list, tuple or ndarray
-	useScipy: convert ty, pv to ndarray, and use scipy functions for the evaluation
-
-	Calculate accuracy, mean squared error and squared correlation coefficient
-	using the true values (ty) and predicted values (pv).
-	"""
-	if scipy != None and useScipy:
-		return evaluations_scipy(scipy.asarray(ty), scipy.asarray(pv))
-	if len(ty) != len(pv):
-		raise ValueError("len(ty) must be equal to len(pv)")
-	total_correct = total_error = 0
-	sumv = sumy = sumvv = sumyy = sumvy = 0
-	for v, y in zip(pv, ty):
-		if y == v:
-			total_correct += 1
-		total_error += (v-y)*(v-y)
-		sumv += v
-		sumy += y
-		sumvv += v*v
-		sumyy += y*y
-		sumvy += v*y
-	l = len(ty)
-	ACC = 100.0*total_correct/l
-	MSE = total_error/l
-	try:
-		SCC = ((l*sumvy-sumv*sumy)*(l*sumvy-sumv*sumy))/((l*sumvv-sumv*sumv)*(l*sumyy-sumy*sumy))
-	except:
-		SCC = float('nan')
-	return (float(ACC), float(MSE), float(SCC))
+	liblinear.save_model(_cstr(model_file_name), model)
 
 def train(arg1, arg2=None, arg3=None):
 	"""
@@ -181,7 +82,7 @@ def train(arg1, arg2=None, arg3=None):
 				|f'(w)|_2 <= eps*min(pos,neg)/l*|f'(w0)|_2,
 				where f is the primal function, (default 0.01)
 			-s 11
-				|f'(w)|_2 <= eps*|f'(w0)|_2 (default 0.001)
+				|f'(w)|_2 <= eps*|f'(w0)|_2 (default 0.0001)
 			-s 1, 3, 4, and 7
 				Dual maximal violation <= eps; similar to liblinear (default 0.)
 			-s 5 and 6
@@ -193,6 +94,7 @@ def train(arg1, arg2=None, arg3=None):
 		-B bias : if bias >= 0, instance x becomes [x; bias]; if < 0, no bias term added (default -1)
 		-wi weight: weights adjust the parameter C of different classes (see README for details)
 		-v n: n-fold cross validation mode
+		-C : find parameters (C for -s 0, 2 and C, p for -s 11)
 		-q : quiet mode (no outputs)
 	"""
 	prob, param = None, None
@@ -216,18 +118,25 @@ def train(arg1, arg2=None, arg3=None):
 	if err_msg :
 		raise ValueError('Error: %s' % err_msg)
 
-	if param.flag_find_C:
+	if param.flag_find_parameters:
 		nr_fold = param.nr_fold
 		best_C = c_double()
-		best_rate = c_double()
-		max_C = 1024
+		best_p = c_double()
+		best_score = c_double()
 		if param.flag_C_specified:
 			start_C = param.C
 		else:
 			start_C = -1.0
-		liblinear.find_parameter_C(prob, param, nr_fold, start_C, max_C, best_C, best_rate)
-		print("Best C = %lf  CV accuracy = %g%%\n"% (best_C.value, 100.0*best_rate.value))
-		return best_C.value,best_rate.value
+		if param.flag_p_specified:
+			start_p = param.p
+		else:
+			start_p = -1.0
+		liblinear.find_parameters(prob, param, nr_fold, start_C, start_p, best_C, best_p, best_score)
+		if param.solver_type in [L2R_LR, L2R_L2LOSS_SVC]:
+			print("Best C = %g  CV accuracy = %g%%\n"% (best_C.value, 100.0*best_score.value))
+		elif param.solver_type in [L2R_L2LOSS_SVR]:
+			print("Best C = %g Best p = %g  CV MSE = %g\n"% (best_C.value, best_p.value, best_score.value))
+		return best_C.value,best_p.value,best_score.value
 
 
 	elif param.flag_cross_validation:
