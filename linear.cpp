@@ -3073,6 +3073,107 @@ void find_parameters_pso(const problem *prob, const parameter *param, int nr_fol
     free(subprob);
 }
 
+class anl{
+    public:
+        anl(const problem *prob, const parameter *param, int *fold_start, int *perm, problem *subprob, int nr_fold);
+        void solve();
+    private:
+        double min_p, max_p;
+        double min_C, max_C;
+        double range[D][2];
+        const int max_iter = 10;
+
+        double g_best = INF;
+        double g_pos[D];
+
+        // Fold splits and parameter
+        const problem *prob;
+        parameter param_tmp;
+        int *fold_start;
+        int *perm;
+        problem *subprob;
+        int nr_fold;
+        
+        std::default_random_engine sphere_gen;
+
+        double get_i_MSE();
+};
+
+
+anl::anl(const problem *prob, const parameter *param, int *fold_start, int *perm, problem *subprob, int nr_fold){}
+
+void anl::solve(){
+}
+
+double anl::get_i_MSE(){}
+
+void find_parameters_anl(const problem *prob, const parameter *param, int nr_fold, double start_C, double start_p, double *best_C, double *best_p, double *best_score)
+{
+    // prepare CV folds
+
+    int i;
+    int *fold_start;
+    int l = prob->l;
+    int *perm = Malloc(int, l);
+    struct problem *subprob = Malloc(problem,nr_fold);
+
+    if (nr_fold > l)
+    {
+        nr_fold = l;
+        fprintf(stderr,"WARNING: # folds > # data. Will use # folds = # data instead (i.e., leave-one-out cross validation)\n");
+    }
+    fold_start = Malloc(int,nr_fold+1);
+    for(i=0;i<l;i++) perm[i]=i;
+    for(i=0;i<l;i++)
+    {
+        int j = i+rand()%(l-i);
+        swap(perm[i],perm[j]);
+    }
+    for(i=0;i<=nr_fold;i++)
+        fold_start[i]=i*l/nr_fold;
+
+    for(i=0;i<nr_fold;i++)
+    {
+        int begin = fold_start[i];
+        int end = fold_start[i+1];
+        int j,k;
+
+        subprob[i].bias = prob->bias;
+        subprob[i].n = prob->n;
+        subprob[i].l = l-(end-begin);
+        subprob[i].x = Malloc(struct feature_node*,subprob[i].l);
+        subprob[i].y = Malloc(double,subprob[i].l);
+
+        k=0;
+        for(j=0;j<begin;j++)
+        {
+            subprob[i].x[k] = prob->x[perm[j]];
+            subprob[i].y[k] = prob->y[perm[j]];
+            ++k;
+        }
+        for(j=end;j<l;j++)
+        {
+            subprob[i].x[k] = prob->x[perm[j]];
+            subprob[i].y[k] = prob->y[perm[j]];
+            ++k;
+        }
+
+    }
+
+
+    anl anl_prob(prob, param, fold_start, perm, subprob , nr_fold);
+    anl_prob.solve();
+
+    free(fold_start);
+    free(perm);
+    for(i=0; i<nr_fold; i++)
+    {
+        free(subprob[i].x);
+        free(subprob[i].y);
+    }
+    free(subprob);
+}
+
 double predict_values(const struct model *model_, const struct feature_node *x, double *dec_values)
 {
 	int idx;
