@@ -3081,9 +3081,17 @@ class anl{
         double min_p, max_p;
         double min_C, max_C;
         double range[D][2];
-        const int max_iter = 10;
+        const int max_iter = 300;
+        double chi_sqr, demon;
+        double T = 1000000000;
 
-        double g_best = INF;
+        double c_pos[D];
+        double c_mse;
+
+        double n_pos[D];
+        double n_mse;
+
+        double g_mse = INF;
         double g_pos[D];
 
         // Fold splits and parameter
@@ -3094,18 +3102,174 @@ class anl{
         problem *subprob;
         int nr_fold;
         
-        std::default_random_engine sphere_gen;
-
-        double get_i_MSE();
+        std::default_random_engine generator;
+        void rand_pos(double *pos);
+        void rand_next_pos(double *c_pos, double *n_pos);
+        double get_lambda(double *unit_sphere, double *pos);
+        double get_MSE(double *pos);
+        void update_global();
 };
 
 
-anl::anl(const problem *prob, const parameter *param, int *fold_start, int *perm, problem *subprob, int nr_fold){}
+anl::anl(const problem *_prob, const parameter *_param, int *_fold_start, int *_perm, problem *_subprob, int _nr_fold) : prob(_prob), param_tmp(*_param), fold_start(_fold_start), perm(_perm), subprob(_subprob), nr_fold(_nr_fold){
+    
+    set_print_string_function(&print_null);
+    min_p = 0;
+    max_p = calc_max_p(prob, &param_tmp);
+    min_C = INF;
+    max_C = 1048576;
+    const int num_p_steps = 20;
+    for(int i = 0; i < num_p_steps; i++){
+        param_tmp.p = i*max_p/num_p_steps;
+        min_C = min(min_C, calc_start_C(prob, &param_tmp));
+    }
+    
+    range[0][0] = 0; range[0][1] = 1;
+    range[1][0] = 0; range[1][1] = 1;
 
-void anl::solve(){
+    chi_sqr = 9.21; // Consider D = 2
+    demon = 1.0 / 0.9 - 1.0; // Consider D = 2
+
+    rand_pos(c_pos);
+    c_mse = get_MSE(c_pos);
+    update_global();
 }
 
-double anl::get_i_MSE(){}
+void anl::update_global(){
+    if( c_mse < g_mse ){
+        g_mse = c_mse;
+        for(int d = 0; d < D ; d++)
+            g_pos[d] = c_pos[d];
+    }
+}
+
+double anl::get_lambda( double *unit_sphere, double *pos){
+    double slope = unit_sphere[1] / unit_sphere[0];
+    double _x, _y;
+    if( unit_sphere[0] > 0 && unit_sphere[1] > 0){
+        _x = range[0][1];
+        _y = range[1][1];
+    }
+    else if( unit_sphere[0] < 0 && unit_sphere[1] > 0){
+        _x = range[0][0];
+        _y = range[1][1];
+    }
+    else if( unit_sphere[0] < 0 && unit_sphere[1] < 0){
+        _x = range[0][0];
+        _y = range[1][0];
+    }
+    else if( unit_sphere[0] > 0 && unit_sphere[1] < 0){
+        _x = range[0][1];
+        _y = range[1][0];
+    }
+
+    double y = slope *( _x - pos[0]) + pos[1];
+    double x = 1.0/slope *( _y - pos[1]) + pos[0];
+    double lambda;
+    if( y >= range[1][0] && y <= range[1][1] )
+        lambda = sqrt( (pos[0] - _x) * (pos[0] - _x) + (pos[1] - y) * (pos[1] - y) );
+    else
+        lambda = sqrt( (pos[0] - x) * (pos[0] - x) + (pos[1] - _y) * (pos[1] - _y) );
+
+    /*printf("%lf %lf %lf %lf\n", range[0][0],  range[0][1], range[1][0], range[1][1]);
+    if( y >= range[1][0] && y <= range[1][1] )
+        printf("pos (%lf, %lf), (%lf, %lf )\n", pos[0], pos[1], _x, y);
+    else
+        printf("pos (%lf, %lf), (%lf, %lf )\n", pos[0], pos[1], x, _y);
+    */
+    return lambda;
+}
+
+void anl::rand_next_pos(double *c_pos, double *n_pos){
+    // Rand a direction 
+    std::normal_distribution<double> norm_distribution(0.0,1.0);
+    double unit_sphere[D];
+    double scale = 0.0;
+    for(int d = 0; d < D; d++){
+        unit_sphere[d] = norm_distribution(generator);
+        scale += unit_sphere[d] * unit_sphere[d];
+    }
+    scale = sqrt(scale);
+    for(int d = 0; d < D; d++)
+        unit_sphere[d] /= scale;
+    //printf("unit sphere point (%lf, %lf)\n", unit_sphere[0], unit_sphere[1]);
+
+    // Rand a step size
+    
+    double lambda = get_lambda( unit_sphere, c_pos );
+
+    //printf("lambda %lf\n", lambda);
+
+    std::uniform_real_distribution<double> distribution(0.0, lambda);
+    double step_size = distribution(generator);
+    for(int d = 0; d < D; d++)
+        n_pos[d] = c_pos[d] + unit_sphere[d] * step_size;
+}
+
+/*bool anl::is_in_bound(double *pos){
+    bool bounded = true;
+    for(int d = 0; d < D; d++){
+        if( pos[d] < range[d][0] || pos[d] > range[d][1] ){
+            bounded = false;
+            break;
+        }
+    }
+    return bounded;
+}*/
+
+void anl::rand_pos(double *pos){
+    std::uniform_real_distribution<double> distribution(0.0, 1.0);
+    // Random init position
+    for(int d = 0; d < D; d++)
+        pos[d] = range[d][0] + (range[d][1] - range[d][0]) * distribution(generator);
+}
+
+void anl::solve(){
+    int t = 0;
+    while(t < max_iter){
+        rand_next_pos(c_pos, n_pos);
+        n_mse = get_MSE(n_pos);
+        //printf("NEXT p: %lf C: %lf mse: %lf T %lf\n",  n_pos[0], n_pos[1], n_mse, T);
+
+        double delta_E = c_mse - n_mse;
+
+        double accp;
+        if(delta_E < 0){ 
+            accp = exp( delta_E / T );
+        }
+        else{
+            accp = 1;
+        }
+        
+        std::uniform_real_distribution<double> distribution(0.0, 1.0);
+        double mu = distribution(generator);
+
+        if(mu < accp){
+            for(int d = 0; d < D; d++)
+                c_pos[d] = n_pos[d];
+            c_mse = n_mse;
+        }
+
+        if( c_mse < g_mse ){
+            T = 2.0 * (g_mse - c_mse) / chi_sqr;
+            update_global();
+            double p = max_p * g_pos[0] + min_p;
+            double C = max_C * g_pos[1] + min_C;
+            printf("iter %d p: %lf C: %lf mse: %lf T: %lf\n", t, p, C, g_mse, T);
+        }
+        //printf("iter: %d p: %lf C: %lf mse: %lf T %lf\n", t, g_pos[0], g_pos[1], g_mse, T);
+
+        t++;
+    }
+}
+
+double anl::get_MSE(double *pos){
+    param_tmp.p = max_p * pos[0] + min_p;
+    param_tmp.C = max_C * pos[1] + min_C;
+    double mse = cross_validation_with_subprob(prob, &param_tmp, fold_start, perm, subprob, nr_fold);
+    //printf("p: %lf C: %lf mse: %lf\n", param_tmp.p, param_tmp.C, mse);
+    return mse;
+}
 
 void find_parameters_anl(const problem *prob, const parameter *param, int nr_fold, double start_C, double start_p, double *best_C, double *best_p, double *best_score)
 {
