@@ -3098,13 +3098,16 @@ class anl{
         const int max_iter = 300;
         double chi_sqr, demon;
         double T = 1000000000;
-
+        
+        // Current point
         double c_pos[D];
         double c_mse;
 
+        // Next candidate point
         double n_pos[D];
         double n_mse;
 
+        // Global minimun point
         double g_mse = INF;
         double g_pos[D];
 
