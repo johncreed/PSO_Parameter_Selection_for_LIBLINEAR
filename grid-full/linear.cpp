@@ -2385,7 +2385,7 @@ static void find_parameter_C(const problem *prob, parameter *param_tmp, double s
 			int begin = fold_start[i];
 			int end = fold_start[i+1];
 
-			param_tmp->init_sol = prev_w[i];
+			param_tmp->init_sol = NULL;
 			struct model *submodel = train(&subprob[i],param_tmp);
 
 			int total_w_size;
@@ -2461,8 +2461,6 @@ static void find_parameter_C(const problem *prob, parameter *param_tmp, double s
 		}
 
 		num_unchanged_w++;
-		if(num_unchanged_w == 5)
-			break;
 		param_tmp->C = param_tmp->C*ratio;
 	}
 
@@ -2763,7 +2761,7 @@ void find_parameters(const problem *prob, const parameter *param, int nr_fold, d
 	{
 		double max_p = calc_max_p(prob, &param_tmp);
 		int num_p_steps = 20;
-		double max_C = 1048576;
+		double max_C = pow(2.0, 50);
 		*best_score = INF;
 
 		i = num_p_steps-1;
