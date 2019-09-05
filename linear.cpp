@@ -2802,12 +2802,11 @@ void find_parameters(const problem *prob, const parameter *param, int nr_fold, d
 }
 
 const int D = 2; // Dimension
-const int N = 5; // Swarm size
+const int N = 40; // Swarm size
 class pso{
     public:
         pso(const problem *prob, const parameter *param, int *fold_start, int *perm, problem *subprob, int nr_fold);
         void solve();
-        //    cross_validation_with_subprob();
     private:
         double min_p, max_p;
         double min_C, max_C;
@@ -2864,8 +2863,8 @@ pso::pso(const problem *_prob, const parameter *_param, int *_fold_start, int *_
         l_best[i] = INF;
     }
     
-    range[0][0] = min_p; range[0][1] = max_p;
-    range[1][0] = min_C; range[1][1] = max_C;
+    range[0][0] = 0; range[0][1] = 1;
+    range[1][0] = 0; range[1][1] = 1;
 
     std::default_random_engine generator[D];
     std::uniform_real_distribution<double> distribution(0.0, 1.0);
@@ -2910,7 +2909,7 @@ void pso::update_p_MSE(const int i, const double mse_i){
 void pso::update_l_MSE(const int i, const double mse_i){
     for(int cnt = 0; cnt < nbh_size; cnt++ ){
         int j = rand() % N;
-        if(mse_i < p_best[j]){
+        if(mse_i < l_best[j]){
             l_best[j] = mse_i;
             for(int d = 0; d < D; d++)
                 l_pos[j][d] = c_pos[i][d];
@@ -2919,9 +2918,10 @@ void pso::update_l_MSE(const int i, const double mse_i){
 }
 
 double pso::get_i_MSE(int i){
-    param_tmp.p = c_pos[i][0];
-    param_tmp.C = c_pos[i][1];
+    param_tmp.p = c_pos[i][0] * max_p + min_p;
+    param_tmp.C = c_pos[i][1] * max_C + min_C;
     double mse_i = cross_validation_with_subprob(prob, &param_tmp, fold_start, perm, subprob, nr_fold);
+    //printf("p: %lf C: %g mse: %lf\n", param_tmp.p, param_tmp.C, mse_i);
     return mse_i;
 }
 
@@ -2944,9 +2944,15 @@ void pso::update_i(const int i){
             g[d] = c_pos[i][d] + c*(p_pos[i][d] + l_pos[i][d] - 2.0* c_pos[i][d])/3.0;
     }
 
-    //printf("c_pos %lf %lf \n", c_pos[i][0], c_pos[i][1]);
-    //printf("l_pos %lf %lf \n", l_pos[i][0], l_pos[i][1]);
-    //printf("p_pos %lf %lf \n", p_pos[i][0], p_pos[i][1]);
+    //printf("particle %d\n", i);
+    //printf("c_pos %lf %g \n", c_pos[i][0] * max_p + min_p, c_pos[i][1] * max_C + min_C );
+    //printf("l_pos %lf %g \n", l_pos[i][0] * max_p + min_p, l_pos[i][1] * max_C + min_C );
+    //printf("p_pos %lf %g \n", p_pos[i][0] * max_p + min_p, p_pos[i][1] * max_C + min_C );
+    //printf("l_mse %lf p_mse %lf\n", l_best[i], p_best[i]);
+    //printf("g_pos %lf %lf \n", g[0] * max_p + min_p, g[1] * max_C + min_C);
+    //printf("c_pos %lf %g \n", c_pos[i][0], c_pos[i][1]);
+    //printf("l_pos %lf %g \n", l_pos[i][0], l_pos[i][1]);
+    //printf("p_pos %lf %g \n", p_pos[i][0], p_pos[i][1]);
     //printf("g_pos %lf %lf \n", g[0], g[1]);
     double radius = 0;
     for(int d = 0; d < D; d++)
@@ -2970,40 +2976,48 @@ void pso::update_i(const int i){
     for(int d = 0; d < D; d++)
         rand_pos[d] = rand_pos[d] * scale + g[d];
 
-    //printf("rand_pos %lf %lf \n", rand_pos[0], rand_pos[1]);
+    //printf("rand_pos %lf %lf distance to center %lf\n", rand_pos[0], rand_pos[1], sqrt( (rand_pos[0] - g[0]) * (rand_pos[0] - g[0]) + (rand_pos[1] - g[1]) * (rand_pos[1] - g[1])));
 
+    //printf("v %lf %lf\n", v[i][0], v[i][1]);
     for(int d = 0; d < D; d++)
         v[i][d] = omega*v[i][d] + ( rand_pos[d] - c_pos[i][d] );
+
+    //printf("v %lf %lf\n", v[i][0], v[i][1]);
 
     for(int d = 0; d < D; d++){
         c_pos[i][d] += v[i][d];
         if(c_pos[i][d] < range[d][0]){
-            //fprintf(stdout, "Warning: Hit lower bound %lf is lower then %lf\n", c_pos[i][d], range[d][0]);
+            //fprintf(stdout, "Warning: Hit %d lower bound %lf is lower then %lf\n", d, c_pos[i][d], range[d][0]);
             c_pos[i][d] = range[d][0];
             v[i][d] = -0.5 * v[i][d];
         }
         else if(c_pos[i][d] > range[d][1]){
-            //fprintf(stdout, "Warning: Hit upper bound %lf is greater then %lf\n", c_pos[i][d], range[d][1]);
+            //fprintf(stdout, "Warning: Hit %d upper bound %lf is greater then %lf\n", d, c_pos[i][d], range[d][1]);
             c_pos[i][d] = range[d][1]; 
             v[i][d] = -0.5 * v[i][d];
         }
     }
 }
+
 void pso::solve(){
     int t = 0;
     while(t < max_iter){
         for(int i = 0; i < N; i++){
             update_i(i);
             double mse_i = get_i_MSE(i);
-            //printf("p: %lf log2C: %lf mse_i: %lf l_mse_i %lf p_mse_i %lf\n", c_pos[i][0], log(c_pos[i][1])/log(2.0), mse_i, l_best[i], p_best[i] );
+            //printf("p: %lf C: %lf mse_i: %lf l_mse_i %lf p_mse_i %lf\n", c_pos[i][0], c_pos[i][1], mse_i, l_best[i], p_best[i] );
             update_g_MSE(i, mse_i);
             update_p_MSE(i, mse_i);
             update_l_MSE(i, mse_i);
         }
-        printf("iter %d p: %lf C: %lf mse_i: %lf\n", t, g_pos[0], g_pos[1], g_best );
+        double p = g_pos[0] * max_p + min_p;
+        double C = g_pos[1] * max_C + min_C;
+        printf("iter %d p: %lf C: %lf mse_i: %lf\n", t, p, C, g_best );
         t++;
     }
-    printf("Best p: %lf C: %lf mse_i: %lf\n", g_pos[0], g_pos[1], g_best );
+    double p = g_pos[0] * max_p + min_p;
+    double C = g_pos[1] * max_C + min_C;
+    printf("Best p: %lf C: %lf mse_i: %lf\n", p, C, g_best );
 }
 
 void find_parameters_pso(const problem *prob, const parameter *param, int nr_fold, double start_C, double start_p, double *best_C, double *best_p, double *best_score)

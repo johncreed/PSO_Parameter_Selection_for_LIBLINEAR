@@ -9,7 +9,7 @@ grid()
 for f in `./list_data.sh reg`
 #for f in reg/*
 do
-  echo "./train -s 11 -P ${f} > $log_path/${f#*/}"
+  echo "./train -s 11 -P ${f} > $log_path/${f#*/}.pso"
 done
 }
 
