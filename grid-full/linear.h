@@ -47,6 +47,7 @@ struct model
 	double *w;
 	int *label;		/* label of each class */
 	double bias;
+    int cg_iter;
 };
 
 struct model* train(const struct problem *prob, const struct parameter *param);

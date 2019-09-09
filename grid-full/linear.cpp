@@ -2153,7 +2153,7 @@ static void group_classes(const problem *prob, int *nr_class_ret, int **label_re
 	free(data_label);
 }
 
-static void train_one(const problem *prob, const parameter *param, double *w, double Cp, double Cn)
+static int train_one(const problem *prob, const parameter *param, double *w, double Cp, double Cn)
 {
 	//inner and outer tolerances for TRON
 	double eps = param->eps;
@@ -2168,6 +2168,8 @@ static void train_one(const problem *prob, const parameter *param, double *w, do
 			pos++;
 	neg = prob->l - pos;
 	double primal_solver_tol = eps*max(min(pos,neg), 1)/prob->l;
+
+    int cg_iter = 0;
 
 	function *fun_obj=NULL;
 	switch(param->solver_type)
@@ -2248,7 +2250,7 @@ static void train_one(const problem *prob, const parameter *param, double *w, do
 			fun_obj=new l2r_l2_svr_fun(prob, C, param->p);
 			TRON tron_obj(fun_obj, param->eps);
 			tron_obj.set_print_string(liblinear_print_string);
-			tron_obj.tron(w);
+			cg_iter = tron_obj.tron(w);
 			delete fun_obj;
 			delete[] C;
 			break;
@@ -2264,6 +2266,8 @@ static void train_one(const problem *prob, const parameter *param, double *w, do
 			fprintf(stderr, "ERROR: unknown solver_type\n");
 			break;
 	}
+
+    return cg_iter;
 }
 
 // Calculate the initial C for parameter selection
@@ -2353,7 +2357,7 @@ double cross_validation_with_subprob(const problem *prob, const parameter *param
     return current_error;
 }
 
-static void find_parameter_C(const problem *prob, parameter *param_tmp, double start_C, double max_C, double *best_C, double *best_score, const int *fold_start, const int *perm, const problem *subprob, int nr_fold)
+static int find_parameter_C(const problem *prob, parameter *param_tmp, double start_C, double max_C, double *best_C, double *best_score, const int *fold_start, const int *perm, const problem *subprob, int nr_fold)
 {
 	// variables for CV
 	int i;
@@ -2373,6 +2377,8 @@ static void find_parameter_C(const problem *prob, parameter *param_tmp, double s
 		*best_score = INF;
 	*best_C = start_C;
 
+    double cg_iter = 0;
+
 	param_tmp->C = start_C;
 	while(param_tmp->C <= max_C)
 	{
@@ -2387,6 +2393,7 @@ static void find_parameter_C(const problem *prob, parameter *param_tmp, double s
 
 			param_tmp->init_sol = NULL;
 			struct model *submodel = train(&subprob[i],param_tmp);
+            cg_iter += submodel->cg_iter;
 
 			int total_w_size;
 			if(submodel->nr_class == 2)
@@ -2470,6 +2477,7 @@ static void find_parameter_C(const problem *prob, parameter *param_tmp, double s
 	for(i=0; i<nr_fold; i++)
 		free(prev_w[i]);
 	free(prev_w);
+    return cg_iter;
 }
 
 
@@ -2504,7 +2512,7 @@ model* train(const problem *prob, const parameter *param)
 
 		model_->nr_class = 2;
 		model_->label = NULL;
-		train_one(prob, param, model_->w, 0, 0);
+		model_->cg_iter = train_one(prob, param, model_->w, 0, 0);
 	}
 	else
 	{
@@ -2764,6 +2772,8 @@ void find_parameters(const problem *prob, const parameter *param, int nr_fold, d
 		double max_C = pow(2.0, 50);
 		*best_score = INF;
 
+        int cg_iter = 0;
+
 		i = num_p_steps-1;
 		if(start_p > 0)
 			i = min((int)(start_p/(max_p/num_p_steps)), i);
@@ -2778,7 +2788,7 @@ void find_parameters(const problem *prob, const parameter *param, int nr_fold, d
 			start_C_tmp = min(start_C_tmp, max_C);
 			double best_C_tmp, best_score_tmp;
 			
-			find_parameter_C(prob, &param_tmp, start_C_tmp, max_C, &best_C_tmp, &best_score_tmp, fold_start, perm, subprob, nr_fold);
+			cg_iter += find_parameter_C(prob, &param_tmp, start_C_tmp, max_C, &best_C_tmp, &best_score_tmp, fold_start, perm, subprob, nr_fold);
 			
 			if(best_score_tmp < *best_score)
 			{
@@ -2787,6 +2797,7 @@ void find_parameters(const problem *prob, const parameter *param, int nr_fold, d
 				*best_score = best_score_tmp;
 			}
 		}
+        printf("iter %d p: %lf C: %lf mse_i: %lf cg_total %d\n", 1, *best_p, *best_C, *best_score, cg_iter);
 	}
 
 	free(fold_start);
