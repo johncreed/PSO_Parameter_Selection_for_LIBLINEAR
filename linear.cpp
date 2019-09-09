@@ -2153,7 +2153,7 @@ static void group_classes(const problem *prob, int *nr_class_ret, int **label_re
 	free(data_label);
 }
 
-static void train_one(const problem *prob, const parameter *param, double *w, double Cp, double Cn)
+static int train_one(const problem *prob, const parameter *param, double *w, double Cp, double Cn)
 {
 	//inner and outer tolerances for TRON
 	double eps = param->eps;
@@ -2168,6 +2168,8 @@ static void train_one(const problem *prob, const parameter *param, double *w, do
 			pos++;
 	neg = prob->l - pos;
 	double primal_solver_tol = eps*max(min(pos,neg), 1)/prob->l;
+
+    int total_cg = 0;
 
 	function *fun_obj=NULL;
 	switch(param->solver_type)
@@ -2248,7 +2250,7 @@ static void train_one(const problem *prob, const parameter *param, double *w, do
 			fun_obj=new l2r_l2_svr_fun(prob, C, param->p);
 			TRON tron_obj(fun_obj, param->eps);
 			tron_obj.set_print_string(liblinear_print_string);
-			tron_obj.tron(w);
+			total_cg = tron_obj.tron(w);
 			delete fun_obj;
 			delete[] C;
 			break;
@@ -2264,6 +2266,7 @@ static void train_one(const problem *prob, const parameter *param, double *w, do
 			fprintf(stderr, "ERROR: unknown solver_type\n");
 			break;
 	}
+    return total_cg;
 }
 
 // Calculate the initial C for parameter selection
@@ -2321,17 +2324,19 @@ static double calc_max_p(const problem *prob, const parameter *param)
 	return max_p;
 }
 
-double cross_validation_with_subprob(const problem *prob, const parameter *param, const int *fold_start, const int *perm, const problem *subprob, int nr_fold)
+double cross_validation_with_subprob(const problem *prob, const parameter *param, const int *fold_start, const int *perm, const problem *subprob, int nr_fold, int &total_cg)
 {
     int i;
     double *target = Malloc(double, prob->l);
 
+    total_cg = 0;
     for(i=0;i<nr_fold;i++)
     {
         int begin = fold_start[i];
         int end = fold_start[i+1];
         int j;
         struct model *submodel = train(&subprob[i],param);
+        total_cg += submodel->total_cg;
         for(j=begin;j<end;j++){
             target[perm[j]] = predict(submodel,prob->x[perm[j]]);
         }
@@ -2353,7 +2358,7 @@ double cross_validation_with_subprob(const problem *prob, const parameter *param
     return current_error;
 }
 
-static void find_parameter_C(const problem *prob, parameter *param_tmp, double start_C, double max_C, double *best_C, double *best_score, const int *fold_start, const int *perm, const problem *subprob, int nr_fold)
+static int find_parameter_C(const problem *prob, parameter *param_tmp, double start_C, double max_C, double *best_C, double *best_score, const int *fold_start, const int *perm, const problem *subprob, int nr_fold)
 {
 	// variables for CV
 	int i;
@@ -2373,6 +2378,8 @@ static void find_parameter_C(const problem *prob, parameter *param_tmp, double s
 		*best_score = INF;
 	*best_C = start_C;
 
+    int cg_iter = 0;
+
 	param_tmp->C = start_C;
 	while(param_tmp->C <= max_C)
 	{
@@ -2387,6 +2394,7 @@ static void find_parameter_C(const problem *prob, parameter *param_tmp, double s
 
 			param_tmp->init_sol = prev_w[i];
 			struct model *submodel = train(&subprob[i],param_tmp);
+            cg_iter += submodel->total_cg;
 
 			int total_w_size;
 			if(submodel->nr_class == 2)
@@ -2472,6 +2480,8 @@ static void find_parameter_C(const problem *prob, parameter *param_tmp, double s
 	for(i=0; i<nr_fold; i++)
 		free(prev_w[i]);
 	free(prev_w);
+    
+    return cg_iter;
 }
 
 
@@ -2506,7 +2516,7 @@ model* train(const problem *prob, const parameter *param)
 
 		model_->nr_class = 2;
 		model_->label = NULL;
-		train_one(prob, param, model_->w, 0, 0);
+		model_->total_cg = train_one(prob, param, model_->w, 0, 0);
 	}
 	else
 	{
@@ -2766,6 +2776,8 @@ void find_parameters(const problem *prob, const parameter *param, int nr_fold, d
 		double max_C = 1048576;
 		*best_score = INF;
 
+        int cg_iter = 0;
+
 		i = num_p_steps-1;
 		if(start_p > 0)
 			i = min((int)(start_p/(max_p/num_p_steps)), i);
@@ -2780,7 +2792,7 @@ void find_parameters(const problem *prob, const parameter *param, int nr_fold, d
 			start_C_tmp = min(start_C_tmp, max_C);
 			double best_C_tmp, best_score_tmp;
 			
-			find_parameter_C(prob, &param_tmp, start_C_tmp, max_C, &best_C_tmp, &best_score_tmp, fold_start, perm, subprob, nr_fold);
+			cg_iter += find_parameter_C(prob, &param_tmp, start_C_tmp, max_C, &best_C_tmp, &best_score_tmp, fold_start, perm, subprob, nr_fold);
 			
 			if(best_score_tmp < *best_score)
 			{
@@ -2788,6 +2800,7 @@ void find_parameters(const problem *prob, const parameter *param, int nr_fold, d
 				*best_C = best_C_tmp;
 				*best_score = best_score_tmp;
 			}
+            printf("iter %d p: %lf C: %lf mse_i: %lf cg_total %d\n", 1, *best_p, *best_C, *best_score, cg_iter);
 		}
 	}
 
@@ -2834,6 +2847,8 @@ class pso{
         int *perm;
         problem *subprob;
         int nr_fold;
+
+        int all_cg = 0;
         
         std::default_random_engine sphere_gen;
 
@@ -2920,7 +2935,9 @@ void pso::update_l_MSE(const int i, const double mse_i){
 double pso::get_i_MSE(int i){
     param_tmp.p = c_pos[i][0] * max_p + min_p;
     param_tmp.C = c_pos[i][1] * max_C + min_C;
-    double mse_i = cross_validation_with_subprob(prob, &param_tmp, fold_start, perm, subprob, nr_fold);
+    int total_cg = 0;
+    double mse_i = cross_validation_with_subprob(prob, &param_tmp, fold_start, perm, subprob, nr_fold, total_cg);
+    all_cg += total_cg;
     //printf("p: %lf C: %g mse: %lf\n", param_tmp.p, param_tmp.C, mse_i);
     return mse_i;
 }
@@ -3012,12 +3029,12 @@ void pso::solve(){
         }
         double p = g_pos[0] * max_p + min_p;
         double C = g_pos[1] * max_C + min_C;
-        printf("iter %d p: %lf C: %lf mse_i: %lf\n", t, p, C, g_best );
+        printf("iter %d p: %lf C: %lf mse_i: %lf cg_total %d\n", t, p, C, g_best, all_cg);
         t++;
     }
-    double p = g_pos[0] * max_p + min_p;
-    double C = g_pos[1] * max_C + min_C;
-    printf("Best p: %lf C: %lf mse_i: %lf\n", p, C, g_best );
+    //double p = g_pos[0] * max_p + min_p;
+    //double C = g_pos[1] * max_C + min_C;
+    //printf("Best p: %lf C: %lf mse_i: %lf\n", p, C, g_best );
 }
 
 void find_parameters_pso(const problem *prob, const parameter *param, int nr_fold, double start_C, double start_p, double *best_C, double *best_p, double *best_score)
@@ -3118,6 +3135,8 @@ class anl{
         int *perm;
         problem *subprob;
         int nr_fold;
+
+        int all_cg = 0;
         
         std::default_random_engine generator;
         void rand_pos(double *pos);
@@ -3272,7 +3291,7 @@ void anl::solve(){
             update_global();
             double p = max_p * g_pos[0] + min_p;
             double C = max_C * g_pos[1] + min_C;
-            printf("iter %d p: %lf C: %lf mse: %lf T: %lf\n", t, p, C, g_mse, T);
+            printf("iter %d p: %lf C: %lf mse: %lf cg_total: %d T: %lf\n", t, p, C, g_mse, all_cg, T);
         }
         //printf("iter: %d p: %lf C: %lf mse: %lf T %lf\n", t, g_pos[0], g_pos[1], g_mse, T);
 
@@ -3283,7 +3302,9 @@ void anl::solve(){
 double anl::get_MSE(double *pos){
     param_tmp.p = max_p * pos[0] + min_p;
     param_tmp.C = max_C * pos[1] + min_C;
-    double mse = cross_validation_with_subprob(prob, &param_tmp, fold_start, perm, subprob, nr_fold);
+    int total_cg = 0;
+    double mse = cross_validation_with_subprob(prob, &param_tmp, fold_start, perm, subprob, nr_fold, total_cg);
+    all_cg += total_cg;
     //printf("p: %lf C: %lf mse: %lf\n", param_tmp.p, param_tmp.C, mse);
     return mse;
 }

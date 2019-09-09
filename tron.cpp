@@ -54,7 +54,7 @@ TRON::~TRON()
 {
 }
 
-void TRON::tron(double *w)
+int TRON::tron(double *w)
 {
 	// Parameters for updating the iterates.
 	double eta0 = 1e-4, eta1 = 0.25, eta2 = 0.75;
@@ -92,6 +92,7 @@ void TRON::tron(double *w)
 
 	double *w_new = new double[n];
 	bool reach_boundary;
+    int total_cg = 0;
 	while (iter <= max_iter && search)
 	{
 		cg_iter = trcg(delta, g, s, r, &reach_boundary);
@@ -133,6 +134,7 @@ void TRON::tron(double *w)
 		}
 
 		info("iter %2d act %5.3e pre %5.3e delta %5.3e f %5.3e |g| %5.3e CG %3d\n", iter, actred, prered, delta, f, gnorm, cg_iter);
+        total_cg += cg_iter;
 
 		if (actred > eta0*prered)
 		{
@@ -167,6 +169,7 @@ void TRON::tron(double *w)
 	delete[] r;
 	delete[] w_new;
 	delete[] s;
+    return total_cg;
 }
 
 int TRON::trcg(double delta, double *g, double *s, double *r, bool *reach_boundary)
