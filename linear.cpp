@@ -2850,7 +2850,7 @@ class pso{
 
         int all_cg = 0;
         
-        std::default_random_engine sphere_gen;
+        std::default_random_engine generator;
 
         void update_i(const int i);
         double get_i_MSE(const int i);
@@ -2865,7 +2865,7 @@ pso::pso(const problem *_prob, const parameter *_param, int *_fold_start, int *_
     min_p = 0;
     max_p = calc_max_p(prob, &param_tmp);
     min_C = INF;
-    max_C = 1048576;
+    max_C = pow(2.0, 50);
     const int num_p_steps = 20;
     for(int i = 0; i < num_p_steps; i++){
         param_tmp.p = i*max_p/num_p_steps;
@@ -2881,20 +2881,20 @@ pso::pso(const problem *_prob, const parameter *_param, int *_fold_start, int *_
     range[0][0] = 0; range[0][1] = 1;
     range[1][0] = 0; range[1][1] = 1;
 
-    std::default_random_engine generator[D];
     std::uniform_real_distribution<double> distribution(0.0, 1.0);
     // Random init position
     for(int i = 0; i < N; i++){
         for(int d = 0; d < D; d++){
-            c_pos[i][d] = range[d][0] + (range[d][1] - range[d][0]) * distribution(generator[d]);
+            c_pos[i][d] = range[d][0] + (range[d][1] - range[d][0]) * distribution(generator);
             p_pos[i][d] = c_pos[i][d];
             l_pos[i][d] = c_pos[i][d];
         }
     }
+
     // Random init velocity
     for(int i = 0; i < N; i++){
         for(int d = 0; d < D; d++){
-            v[i][d] = range[d][0] - c_pos[i][d] + (range[d][1] - range[d][0]) * distribution(generator[d]);
+            v[i][d] = range[d][0] - c_pos[i][d] + (range[d][1] - range[d][0]) * distribution(generator);
         }
     }
     // Init MSE_i
@@ -2981,7 +2981,7 @@ void pso::update_i(const int i){
     double rand_pos[D];
     std::normal_distribution<double> distribution(0.0,1.0);
     for(int d = 0; d < D; d++)
-        rand_pos[d] = distribution(sphere_gen);
+        rand_pos[d] = distribution(generator);
 
     double rand_radius = 0;
     for(int d = 0; d < D; d++)
@@ -3153,7 +3153,7 @@ anl::anl(const problem *_prob, const parameter *_param, int *_fold_start, int *_
     min_p = 0;
     max_p = calc_max_p(prob, &param_tmp);
     min_C = INF;
-    max_C = 1048576;
+    max_C = pow(2.0, 50);
     const int num_p_steps = 20;
     for(int i = 0; i < num_p_steps; i++){
         param_tmp.p = i*max_p/num_p_steps;
@@ -3289,6 +3289,9 @@ void anl::solve(){
         if( c_mse < g_mse ){
             T = 2.0 * (g_mse - c_mse) / chi_sqr;
             update_global();
+        }
+
+        if(t % 30 == 0){
             double p = max_p * g_pos[0] + min_p;
             double C = max_C * g_pos[1] + min_C;
             printf("iter %d p: %lf C: %lf mse: %lf cg_total: %d T: %lf\n", t, p, C, g_mse, all_cg, T);
